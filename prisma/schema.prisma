@@ -1,0 +1,416 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// AUTHENTICATION (Auth.js / NextAuth)
+// ----------------------------------------------------
+
+model User {
+  id              String           @id @default(cuid())
+  name            String?
+  email           String?          @unique
+  emailVerified   DateTime?
+  image           String?
+  passwordHash    String?
+  accounts        Account[]
+  sessions        Session[]
+  tournaments     Tournament[]
+  teams           Team[]
+  customTemplates BannerTemplate[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ----------------------------------------------------
+// TOURNAMENT & TEAMS
+// ----------------------------------------------------
+
+enum SportType {
+  FOOTBALL
+  CRICKET
+  BADMINTON
+  BASKETBALL
+  TENNIS
+  ESPORTS
+  CUSTOM
+}
+
+enum ScoreModel {
+  GOALS
+  POINTS
+  SETS_GAMES
+  CRICKET_RUNS
+}
+
+enum TournamentFormat {
+  SINGLE_ELIMINATION
+  DOUBLE_ELIMINATION
+  ROUND_ROBIN
+  GROUP_AND_KNOCKOUT
+  LEAGUE_PLAYOFFS
+  SWISS
+  CUSTOM_MULTI_STAGE
+}
+
+model Tournament {
+  id               String            @id @default(cuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  slug             String            @unique
+  sportType        SportType         @default(FOOTBALL)
+  sportLabel       String            @default("Football")
+  scoreModel       ScoreModel        @default(GOALS)
+  season           String?
+  logoUrl          String?
+  bannerUrl        String?
+  startDate        DateTime?
+  endDate          DateTime?
+  isPublic         Boolean           @default(true)
+  settings         Json?
+
+  stages           Stage[]
+  teams            TournamentTeam[]
+  venues           Venue[]
+  matches          Match[]
+  generatedBanners GeneratedBanner[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([slug])
+}
+
+model Team {
+  id              String           @id @default(cuid())
+  userId          String?
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name            String
+  shortName       String           @db.VarChar(10)
+  code            String?          @db.VarChar(5)
+  logoUrl         String?
+  primaryColor    String?          @default("#1E40AF")
+  secondaryColor  String?          @default("#FFFFFF")
+  tournamentTeams TournamentTeam[]
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([userId])
+}
+
+model TournamentTeam {
+  id           String        @id @default(cuid())
+  tournamentId String
+  tournament   Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  teamId       String
+  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  seed         Int?
+  pot          Int?
+  isWithdrawn  Boolean       @default(false)
+
+  groupTeams   GroupTeam[]
+  homeMatches  Match[]       @relation("HomeTournamentTeam")
+  awayMatches  Match[]       @relation("AwayTournamentTeam")
+  wonMatches   Match[]       @relation("WinnerTournamentTeam")
+  standingRows StandingRow[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([tournamentId, teamId])
+  @@index([tournamentId])
+}
+
+// ----------------------------------------------------
+// STAGES & GROUPS
+// ----------------------------------------------------
+
+enum StageType {
+  GROUP
+  ROUND_ROBIN
+  SINGLE_ELIMINATION
+  DOUBLE_ELIMINATION
+  SWISS
+  PLAYOFF
+}
+
+model Stage {
+  id           String        @id @default(cuid())
+  tournamentId String
+  tournament   Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  stageOrder   Int
+  name         String
+  stageType    StageType
+  config       Json?
+
+  groups       Group[]
+  matches      Match[]
+  standingRows StandingRow[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([tournamentId, stageOrder])
+  @@index([tournamentId])
+}
+
+model Group {
+  id           String        @id @default(cuid())
+  stageId      String
+  stage        Stage         @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  name         String
+  sortOrder    Int
+  advanceCount Int           @default(2)
+
+  groupTeams   GroupTeam[]
+  matches      Match[]
+  standingRows StandingRow[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([stageId])
+}
+
+model GroupTeam {
+  id               String         @id @default(cuid())
+  groupId          String
+  group            Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  tournamentTeamId String
+  tournamentTeam   TournamentTeam @relation(fields: [tournamentTeamId], references: [id], onDelete: Cascade)
+  seedInGroup      Int?
+
+  @@unique([groupId, tournamentTeamId])
+  @@index([groupId])
+}
+
+// ----------------------------------------------------
+// VENUES & MATCHES
+// ----------------------------------------------------
+
+model Venue {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  name         String
+  city         String?
+  timezone     String     @default("UTC")
+  isAvailable  Boolean    @default(true)
+  matches      Match[]
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([tournamentId])
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  POSTPONED
+  CANCELLED
+  WALKOVER
+}
+
+model Match {
+  id                String          @id @default(cuid())
+  tournamentId      String
+  tournament        Tournament      @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  stageId           String
+  stage             Stage           @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  groupId           String?
+  group             Group?          @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  venueId           String?
+  venue             Venue?          @relation(fields: [venueId], references: [id], onDelete: SetNull)
+
+  round             Int
+  matchday          Int?
+  matchNumber       Int
+  leg               Int             @default(1)
+
+  homeTeamId        String?
+  homeTeam          TournamentTeam? @relation("HomeTournamentTeam", fields: [homeTeamId], references: [id], onDelete: SetNull)
+  awayTeamId        String?
+  awayTeam          TournamentTeam? @relation("AwayTournamentTeam", fields: [awayTeamId], references: [id], onDelete: SetNull)
+
+  homePlaceholder   String?
+  awayPlaceholder   String?
+  homeSourceMatchId String?
+  homeSourceMatch   Match?          @relation("HomeSource", fields: [homeSourceMatchId], references: [id], onDelete: SetNull)
+  awaySourceMatchId String?
+  awaySourceMatch   Match?          @relation("AwaySource", fields: [awaySourceMatchId], references: [id], onDelete: SetNull)
+  homeSourceRule    String?
+  awaySourceRule    String?
+
+  dependentHomeMatches Match[]      @relation("HomeSource")
+  dependentAwayMatches Match[]      @relation("AwaySource")
+
+  scheduledAt       DateTime?
+  status            MatchStatus     @default(SCHEDULED)
+  winnerTeamId      String?
+  winnerTeam        TournamentTeam? @relation("WinnerTournamentTeam", fields: [winnerTeamId], references: [id], onDelete: SetNull)
+
+  result            MatchResult?
+  generatedBanners  GeneratedBanner[]
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([tournamentId])
+  @@index([stageId])
+  @@index([groupId])
+  @@index([scheduledAt])
+}
+
+model MatchResult {
+  id               String   @id @default(cuid())
+  matchId          String   @unique
+  match            Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  homeScore        Int      @default(0)
+  awayScore        Int      @default(0)
+  homeSubScores    Json?
+  awaySubScores    Json?
+
+  isExtraTime      Boolean  @default(false)
+  isPenalties      Boolean  @default(false)
+  homePenaltyScore Int?
+  awayPenaltyScore Int?
+
+  isWalkover       Boolean  @default(false)
+  walkoverWinnerId String?
+  notes            String?
+
+  completedAt      DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ----------------------------------------------------
+// STANDINGS & RANKINGS
+// ----------------------------------------------------
+
+model StandingRow {
+  id               String         @id @default(cuid())
+  stageId          String
+  stage            Stage          @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  groupId          String?
+  group            Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  tournamentTeamId String
+  tournamentTeam   TournamentTeam @relation(fields: [tournamentTeamId], references: [id], onDelete: Cascade)
+
+  played           Int            @default(0)
+  won              Int            @default(0)
+  drawn            Int            @default(0)
+  lost             Int            @default(0)
+  goalsFor         Int            @default(0)
+  goalsAgainst     Int            @default(0)
+  goalDifference   Int            @default(0)
+  points           Int            @default(0)
+  form             Json?
+  rank             Int            @default(1)
+
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([stageId, groupId, tournamentTeamId])
+  @@index([stageId, groupId])
+}
+
+// ----------------------------------------------------
+// MATCH BANNERS
+// ----------------------------------------------------
+
+enum BannerType {
+  SINGLE_MATCH
+  MATCH_DAY
+  FIXTURE_ROUND
+  RESULT
+  GROUP_TABLE
+  CHAMPION
+}
+
+enum BannerSize {
+  SQUARE_1080x1080
+  STORY_1080x1920
+  LANDSCAPE_1920x1080
+  LINK_PREVIEW_1200x630
+}
+
+model BannerTemplate {
+  id               String            @id @default(cuid())
+  userId           String?
+  user             User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name             String
+  category         String
+  isBuiltIn        Boolean           @default(false)
+  previewUrl       String?
+  styles           Json
+  config           Json?
+  generatedBanners GeneratedBanner[]
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model GeneratedBanner {
+  id           String         @id @default(cuid())
+  tournamentId String
+  tournament   Tournament     @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  matchId      String?
+  match        Match?         @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  templateId   String
+  template     BannerTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  type         BannerType     @default(SINGLE_MATCH)
+  size         BannerSize     @default(SQUARE_1080x1080)
+  imageUrl     String?
+  version      Int            @default(1)
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([tournamentId])
+  @@index([matchId])
+}
